@@ -4,19 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SHIB Airdrop Web App</title>
-    <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
-            background-color: var(--tg-theme-bg-color, #1a1a1a);
-            color: var(--tg-theme-text-color, #ffffff);
+            background-color: #1a1a1a;
+            color: #ffffff;
             font-family: sans-serif;
             text-align: center;
             padding: 40px 20px;
         }
         button {
-            background-color: var(--tg-theme-button-color, #f3ba2f);
-            color: var(--tg-theme-button-text-color, #000000);
+            background-color: #f3ba2f;
+            color: #000000;
             border: none;
             padding: 15px 30px;
             font-size: 18px;
@@ -28,23 +27,18 @@
     </style>
 </head>
 <body>
-    <h2 id="greeting">Welcome to the Web App!</h2>
-    <p>This page is hosted on Railway and connected to your bot.</p>
+    <h2>🎁 Watch Ad & Earn SHIB</h2>
+    <p>Complete the task below to earn 500 SHIB instantly!</p>
     
-    <button id="closeBtn">Close Web App</button>
+    <button id="adBtn">Watch Ad Now</button>
 
     <script>
-        // Initialize the Telegram Web App
         const tg = window.Telegram.WebApp;
-        tg.expand(); // Opens the web app in full screen
+        tg.expand();
 
-        // Display the user's name if available
-        if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
-            document.getElementById('greeting').innerText = `Welcome, ${tg.initDataUnsafe.user.first_name}!`;
-        }
-
-        // Close button functionality
-        document.getElementById('closeBtn').addEventListener('click', () => {
+        document.getElementById('adBtn').addEventListener('click', () => {
+            alert("Ad completed! Returning to bot...");
+            tg.sendData("ad_completed");
             tg.close();
         });
     </script>
