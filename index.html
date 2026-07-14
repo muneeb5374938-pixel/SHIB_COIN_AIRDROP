@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHIB Airdrop Web App</title>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            background-color: var(--tg-theme-bg-color, #1a1a1a);
+            color: var(--tg-theme-text-color, #ffffff);
+            font-family: sans-serif;
+            text-align: center;
+            padding: 40px 20px;
+        }
+        button {
+            background-color: var(--tg-theme-button-color, #f3ba2f);
+            color: var(--tg-theme-button-text-color, #000000);
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h2 id="greeting">Welcome to the Web App!</h2>
+    <p>This page is hosted on Railway and connected to your bot.</p>
+    
+    <button id="closeBtn">Close Web App</button>
+
+    <script>
+        // Initialize the Telegram Web App
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Opens the web app in full screen
+
+        // Display the user's name if available
+        if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            document.getElementById('greeting').innerText = `Welcome, ${tg.initDataUnsafe.user.first_name}!`;
+        }
+
+        // Close button functionality
+        document.getElementById('closeBtn').addEventListener('click', () => {
+            tg.close();
+        });
+    </script>
+</body>
+</html>
