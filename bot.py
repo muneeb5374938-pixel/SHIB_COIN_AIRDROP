@@ -3,10 +3,15 @@ import sqlite3
 import http.server
 import socketserver
 import threading
-import asyncio
+import logging
 from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+
+# --- SETUP LOGGING ---
+# This will print exact errors in your Railway logs if anything goes wrong
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- LOAD CONFIGURATION ---
 load_dotenv()
@@ -14,9 +19,13 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 
+# Safeguard: Telegram crashes if WebApp URL doesn't start with https://
+if not WEBAPP_URL.startswith("https://"):
+    WEBAPP_URL = "https://google.com" # Fallback to prevent crash
+
 # --- DATABASE SETUP ---
 def init_db():
-    conn = sqlite3.connect("airdrop.db")
+    conn = sqlite3.connect("airdrop.db", check_same_thread=False)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (user_id INTEGER PRIMARY KEY, username TEXT, balance INTEGER DEFAULT 0, referred_by INTEGER, invites INTEGER DEFAULT 0)''')
@@ -40,7 +49,7 @@ class WebAppHandler(http.server.SimpleHTTPRequestHandler):
                 with open("index.html", "rb") as f:
                     self.wfile.write(f.read())
             except FileNotFoundError:
-                self.wfile.write(b"index.html file not found inside directory.")
+                self.wfile.write(b"index.html not found.")
         else:
             self.send_response(200)
             self.end_headers()
@@ -48,10 +57,14 @@ class WebAppHandler(http.server.SimpleHTTPRequestHandler):
 
 def run_server():
     port = int(os.getenv("PORT", "8080"))
-    with socketserver.TCPServer(("", port), WebAppHandler) as httpd:
+    # allow_reuse_address prevents "Address already in use" crashes on Railway
+    class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+        allow_reuse_address = True
+        
+    with ThreadedTCPServer(("0.0.0.0", port), WebAppHandler) as httpd:
+        logger.info(f"Web server running on port {port}")
         httpd.serve_forever()
 
-# Start Web Server in a separate background thread
 threading.Thread(target=run_server, daemon=True).start()
 
 # --- KEYBOARDS ---
@@ -61,123 +74,127 @@ def main_menu():
 
 # --- BOT COMMANDS & HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    args = context.args
-    
-    conn = sqlite3.connect("airdrop.db")
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE user_id=?", (user.id,))
-    existing_user = c.fetchone()
-    
-    referred_by = None
-    if not existing_user:
-        if args and args[0].isdigit() and int(args[0]) != user.id:
-            referred_by = int(args[0])
-            c.execute("UPDATE users SET balance = balance + 1000, invites = invites + 1 WHERE user_id=?", (referred_by,))
+    try:
+        user = update.effective_user
+        args = context.args
         
-        c.execute("INSERT INTO users (user_id, username, balance, referred_by) VALUES (?, ?, ?, ?)", 
-                  (user.id, user.username, 0, referred_by))
-        conn.commit()
-    conn.close()
+        conn = sqlite3.connect("airdrop.db", check_same_thread=False)
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE user_id=?", (user.id,))
+        existing_user = c.fetchone()
+        
+        referred_by = None
+        if not existing_user:
+            if args and args[0].isdigit() and int(args[0]) != user.id:
+                referred_by = int(args[0])
+                c.execute("UPDATE users SET balance = balance + 1000, invites = invites + 1 WHERE user_id=?", (referred_by,))
+            
+            c.execute("INSERT INTO users (user_id, username, balance, referred_by) VALUES (?, ?, ?, ?)", 
+                      (user.id, user.username, 0, referred_by))
+            conn.commit()
+        conn.close()
 
-    welcome_text = (
-        "🚀 **WELCOME TO THE SHIB OFFICIAL AIRDROP ROBOT** 🚀\n\n"
-        "Earn free $SHIB tokens by completing simple tasks, watching high-paying ads, and inviting your friends!\n\n"
-        "🎁 *Instant registration bonus active!*\n"
-        "👥 *Earn 1,000 SHIB per successful referral!*"
-    )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=main_menu())
+        welcome_text = (
+            "🚀 **WELCOME TO THE SHIB OFFICIAL AIRDROP ROBOT** 🚀\n\n"
+            "Earn free $SHIB tokens by completing simple tasks, watching high-paying ads, and inviting your friends!\n\n"
+            "🎁 *Instant registration bonus active!*\n"
+            "👥 *Earn 1,000 SHIB per successful referral!*"
+        )
+        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=main_menu())
+    except Exception as e:
+        logger.error(f"Error in /start: {e}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
-    
-    conn = sqlite3.connect("airdrop.db")
-    c = conn.cursor()
-    
-    if text == '1st_Home':
-        c.execute("SELECT username, invites FROM users ORDER BY invites DESC LIMIT 10")
-        leaders = c.fetchall()
-        leaderboard = "🏆 **TOP 10 REFERRERS LEADERBOARD** 🏆\n\n"
-        for idx, l in enumerate(leaders, 1):
-            name = l[0] if l[0] else "Anonymous"
-            leaderboard += f"{idx}. @{name} — {l[1]} Invites\n"
+    try:
+        text = update.message.text
+        user_id = update.effective_user.id
         
-        inline_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📺 Watch Ad (500 SHIB)", web_app=WebAppInfo(url=WEBAPP_URL))]
-        ])
-        await update.message.reply_text(f"{leaderboard}\n⚡ *Click below to open the Web App, watch an ad, and earn:*", 
-                                       parse_mode="Markdown", reply_markup=inline_kb)
+        conn = sqlite3.connect("airdrop.db", check_same_thread=False)
+        c = conn.cursor()
         
-    elif text == '2nd_Tasks':
-        c.execute("SELECT id, channel_link, prize TYPE FROM tasks")
-        all_tasks = c.fetchall()
-        if not all_tasks:
-            await update.message.reply_text("❌ No promotional tasks available right now.")
-        else:
-            await update.message.reply_text("📋 **AVAILABLE TASKS**\n\nJoin the channels below and press Verify:")
-            for t in all_tasks:
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔗 Join Channel", url=t[1])],
-                    [InlineKeyboardButton("✅ Verify", callback_data=f"verify_{t[0]}")]
-                ])
-                await update.message.reply_text(f"🎁 Reward: {t[2]} SHIB", reply_markup=kb)
+        if text == '1st_Home':
+            c.execute("SELECT username, invites FROM users ORDER BY invites DESC LIMIT 10")
+            leaders = c.fetchall()
+            leaderboard = "🏆 **TOP 10 REFERRERS LEADERBOARD** 🏆\n\n"
+            for idx, l in enumerate(leaders, 1):
+                name = l[0] if l[0] else "Anonymous"
+                leaderboard += f"{idx}. @{name} — {l[1]} Invites\n"
+            
+            inline_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📺 Watch Ad (500 SHIB)", web_app=WebAppInfo(url=WEBAPP_URL))]
+            ])
+            await update.message.reply_text(f"{leaderboard}\n⚡ *Click below to open the Web App, watch an ad, and earn:*", 
+                                           parse_mode="Markdown", reply_markup=inline_kb)
+            
+        elif text == '2nd_Tasks':
+            c.execute("SELECT id, channel_link, prize FROM tasks")
+            all_tasks = c.fetchall()
+            if not all_tasks:
+                await update.message.reply_text("❌ No promotional tasks available right now.")
+            else:
+                await update.message.reply_text("📋 **AVAILABLE TASKS**\n\nJoin the channels below and press Verify:")
+                for t in all_tasks:
+                    kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔗 Join Channel", url=t[1])],
+                        [InlineKeyboardButton("✅ Verify", callback_data=f"verify_{t[0]}")]
+                    ])
+                    await update.message.reply_text(f"🎁 Reward: {t[2]} SHIB", reply_markup=kb)
 
-    elif text == '3rd_Withdraw':
-        c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-        balance = c.fetchone()[0]
-        if balance < 5000:
-            await update.message.reply_text("❌ Minimum withdrawal amount is **5,000 SHIB**.")
-        else:
-            context.user_data['awaiting_pay_id'] = True
-            await update.message.reply_text("💳 Please enter your **Binance Pay ID** to request withdrawal:")
+        elif text == '3rd_Withdraw':
+            c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+            balance = c.fetchone()[0]
+            if balance < 5000:
+                await update.message.reply_text("❌ Minimum withdrawal amount is **5,000 SHIB**.")
+            else:
+                context.user_data['awaiting_pay_id'] = True
+                await update.message.reply_text("💳 Please enter your **Binance Pay ID** to request withdrawal:")
 
-    elif text == '4rth_Profile':
-        c.execute("SELECT balance, invites FROM users WHERE user_id=?", (user_id,))
-        res = c.fetchone()
-        bot_info = await context.bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
-        profile_msg = (
-            f"👤 **YOUR PROFILE**\n\n"
-            f"💰 Balance: `{res[0]}` SHIB\n"
-            f"👥 Total Invites: `{res[1]}` users\n\n"
-            f"🔗 *Your Unique Referral Link:*\n{ref_link}"
-        )
-        await update.message.reply_text(profile_msg, parse_mode="Markdown")
-        
-    elif context.user_data.get('awaiting_pay_id'):
-        pay_id = text
-        context.user_data['awaiting_pay_id'] = False
-        c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-        balance = c.fetchone()[0]
-        
-        c.execute("INSERT INTO withdraws (user_id, pay_id, amount) VALUES (?, ?, ?)", (user_id, pay_id, balance))
-        c.execute("UPDATE users SET balance = 0 WHERE user_id=?", (user_id,))
-        conn.commit()
-        await update.message.reply_text("✅ Withdrawal request submitted! It will appear in the Admin Panel shortly.")
-        
-    conn.close()
+        elif text == '4rth_Profile':
+            c.execute("SELECT balance, invites FROM users WHERE user_id=?", (user_id,))
+            res = c.fetchone()
+            bot_info = await context.bot.get_me()
+            ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
+            profile_msg = (
+                f"👤 **YOUR PROFILE**\n\n"
+                f"💰 Balance: `{res[0]}` SHIB\n"
+                f"👥 Total Invites: `{res[1]}` users\n\n"
+                f"🔗 *Your Unique Referral Link:*\n{ref_link}"
+            )
+            await update.message.reply_text(profile_msg, parse_mode="Markdown")
+            
+        elif context.user_data.get('awaiting_pay_id'):
+            pay_id = text
+            context.user_data['awaiting_pay_id'] = False
+            c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+            balance = c.fetchone()[0]
+            
+            c.execute("INSERT INTO withdraws (user_id, pay_id, amount) VALUES (?, ?, ?)", (user_id, pay_id, balance))
+            c.execute("UPDATE users SET balance = 0 WHERE user_id=?", (user_id,))
+            conn.commit()
+            await update.message.reply_text("✅ Withdrawal request submitted! It will appear in the Admin Panel shortly.")
+            
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error handling message: {e}")
 
-# --- WEBAPP AD ACTION DISPATCHER ---
 async def web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = update.effective_message.web_app_data.data
     user_id = update.effective_user.id
     if data == "ad_completed":
-        conn = sqlite3.connect("airdrop.db")
+        conn = sqlite3.connect("airdrop.db", check_same_thread=False)
         c = conn.cursor()
         c.execute("UPDATE users SET balance = balance + 500 WHERE user_id=?", (user_id,))
         conn.commit()
         conn.close()
         await update.message.reply_text("🎉 Good job! You watched the ad and earned **500 SHIB**!")
 
-# --- TASK MEMBERSHIP VERIFICATION ---
 async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     task_id = int(query.data.split("_")[1])
     user_id = query.from_user.id
     
-    conn = sqlite3.connect("airdrop.db")
+    conn = sqlite3.connect("airdrop.db", check_same_thread=False)
     c = conn.cursor()
     c.execute("SELECT channel_id, prize FROM tasks WHERE id=?", (task_id,))
     task = c.fetchone()
@@ -191,7 +208,8 @@ async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("✅ Verified! Reward added successfully.")
             else:
                 await context.bot.send_message(chat_id=user_id, text="❌ Verification failed! Please join the channel first.")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Verification error: {e}")
             await context.bot.send_message(chat_id=user_id, text="⚠️ Error checking status. Make sure the bot is an Admin inside the targeted channel.")
     conn.close()
 
@@ -204,7 +222,7 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel_id = context.args[1]
         prize = int(context.args[2])
         
-        conn = sqlite3.connect("airdrop.db")
+        conn = sqlite3.connect("airdrop.db", check_same_thread=False)
         c = conn.cursor()
         c.execute("INSERT INTO tasks (channel_link, channel_id, prize) VALUES (?, ?, ?)", (link, channel_id, prize))
         conn.commit()
@@ -229,7 +247,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     action = query.data.split("_")[1]
-    conn = sqlite3.connect("airdrop.db")
+    conn = sqlite3.connect("airdrop.db", check_same_thread=False)
     c = conn.cursor()
     
     if action == "all":
@@ -261,7 +279,7 @@ async def update_status_callback(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     
     _, target_status, record_id = query.data.split("_")
-    conn = sqlite3.connect("airdrop.db")
+    conn = sqlite3.connect("airdrop.db", check_same_thread=False)
     c = conn.cursor()
     c.execute("UPDATE withdraws SET status=? WHERE id=?", (target_status, record_id))
     
@@ -270,8 +288,8 @@ async def update_status_callback(update: Update, context: ContextTypes.DEFAULT_T
         user_id, amount = c.fetchone()
         try:
             await context.bot.send_message(chat_id=user_id, text=f"🎉 **Your withdrawal of {amount} SHIB has been processed and marked as PAID!**")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to message user on paid status: {e}")
             
     conn.commit()
     conn.close()
@@ -279,7 +297,7 @@ async def update_status_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 def main():
     if not TOKEN:
-        print("Missing BOT_TOKEN variable!")
+        logger.error("Missing BOT_TOKEN variable! Please set it in Railway Variables.")
         return
 
     app = Application.builder().token(TOKEN).build()
@@ -293,12 +311,9 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_callback, pattern="^adm_"))
     app.add_handler(CallbackQueryHandler(update_status_callback, pattern="^set_"))
     
-    print("Starting bot polling loop...")
+    logger.info("Bot is successfully running...")
     app.run_polling()
 
 if __name__ == '__main__':
-    try:
-        main()
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    main()
             
