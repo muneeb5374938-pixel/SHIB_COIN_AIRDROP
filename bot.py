@@ -9,7 +9,6 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKe
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # --- SETUP LOGGING ---
-# This will print exact errors in your Railway logs if anything goes wrong
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -19,9 +18,9 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 
-# Safeguard: Telegram crashes if WebApp URL doesn't start with https://
+# Safeguard for WebApp URL
 if not WEBAPP_URL.startswith("https://"):
-    WEBAPP_URL = "https://google.com" # Fallback to prevent crash
+    WEBAPP_URL = "https://google.com" 
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -38,7 +37,7 @@ def init_db():
 
 init_db()
 
-# --- WEB SERVER FOR RAILWAY & TELEGRAM WEB APP ---
+# --- WEB SERVER FOR RAILWAY ---
 class WebAppHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/':
@@ -57,7 +56,6 @@ class WebAppHandler(http.server.SimpleHTTPRequestHandler):
 
 def run_server():
     port = int(os.getenv("PORT", "8080"))
-    # allow_reuse_address prevents "Address already in use" crashes on Railway
     class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         allow_reuse_address = True
         
@@ -95,12 +93,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         welcome_text = (
-            "🚀 **WELCOME TO THE SHIB OFFICIAL AIRDROP ROBOT** 🚀\n\n"
+            "🚀 <b>WELCOME TO THE SHIB OFFICIAL AIRDROP ROBOT</b> 🚀\n\n"
             "Earn free $SHIB tokens by completing simple tasks, watching high-paying ads, and inviting your friends!\n\n"
-            "🎁 *Instant registration bonus active!*\n"
-            "👥 *Earn 1,000 SHIB per successful referral!*"
+            "🎁 <i>Instant registration bonus active!</i>\n"
+            "👥 <i>Earn 1,000 SHIB per successful referral!</i>"
         )
-        await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=main_menu())
+        # Using parse_mode="HTML" absolutely guarantees it won't crash when sending
+        await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=main_menu())
     except Exception as e:
         logger.error(f"Error in /start: {e}")
 
@@ -115,7 +114,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == '1st_Home':
             c.execute("SELECT username, invites FROM users ORDER BY invites DESC LIMIT 10")
             leaders = c.fetchall()
-            leaderboard = "🏆 **TOP 10 REFERRERS LEADERBOARD** 🏆\n\n"
+            leaderboard = "🏆 <b>TOP 10 REFERRERS LEADERBOARD</b> 🏆\n\n"
             for idx, l in enumerate(leaders, 1):
                 name = l[0] if l[0] else "Anonymous"
                 leaderboard += f"{idx}. @{name} — {l[1]} Invites\n"
@@ -123,8 +122,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inline_kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📺 Watch Ad (500 SHIB)", web_app=WebAppInfo(url=WEBAPP_URL))]
             ])
-            await update.message.reply_text(f"{leaderboard}\n⚡ *Click below to open the Web App, watch an ad, and earn:*", 
-                                           parse_mode="Markdown", reply_markup=inline_kb)
+            await update.message.reply_text(f"{leaderboard}\n⚡ <i>Click below to open the Web App, watch an ad, and earn:</i>", 
+                                           parse_mode="HTML", reply_markup=inline_kb)
             
         elif text == '2nd_Tasks':
             c.execute("SELECT id, channel_link, prize FROM tasks")
@@ -132,7 +131,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not all_tasks:
                 await update.message.reply_text("❌ No promotional tasks available right now.")
             else:
-                await update.message.reply_text("📋 **AVAILABLE TASKS**\n\nJoin the channels below and press Verify:")
+                await update.message.reply_text("📋 <b>AVAILABLE TASKS</b>\n\nJoin the channels below and press Verify:", parse_mode="HTML")
                 for t in all_tasks:
                     kb = InlineKeyboardMarkup([
                         [InlineKeyboardButton("🔗 Join Channel", url=t[1])],
@@ -144,10 +143,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
             balance = c.fetchone()[0]
             if balance < 5000:
-                await update.message.reply_text("❌ Minimum withdrawal amount is **5,000 SHIB**.")
+                await update.message.reply_text("❌ Minimum withdrawal amount is <b>5,000 SHIB</b>.", parse_mode="HTML")
             else:
                 context.user_data['awaiting_pay_id'] = True
-                await update.message.reply_text("💳 Please enter your **Binance Pay ID** to request withdrawal:")
+                await update.message.reply_text("💳 Please enter your <b>Binance Pay ID</b> to request withdrawal:", parse_mode="HTML")
 
         elif text == '4rth_Profile':
             c.execute("SELECT balance, invites FROM users WHERE user_id=?", (user_id,))
@@ -155,12 +154,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bot_info = await context.bot.get_me()
             ref_link = f"https://t.me/{bot_info.username}?start={user_id}"
             profile_msg = (
-                f"👤 **YOUR PROFILE**\n\n"
-                f"💰 Balance: `{res[0]}` SHIB\n"
-                f"👥 Total Invites: `{res[1]}` users\n\n"
-                f"🔗 *Your Unique Referral Link:*\n{ref_link}"
+                f"👤 <b>YOUR PROFILE</b>\n\n"
+                f"💰 Balance: <code>{res[0]}</code> SHIB\n"
+                f"👥 Total Invites: <code>{res[1]}</code> users\n\n"
+                f"🔗 <i>Your Unique Referral Link:</i>\n{ref_link}"
             )
-            await update.message.reply_text(profile_msg, parse_mode="Markdown")
+            await update.message.reply_text(profile_msg, parse_mode="HTML")
             
         elif context.user_data.get('awaiting_pay_id'):
             pay_id = text
@@ -186,7 +185,7 @@ async def web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("UPDATE users SET balance = balance + 500 WHERE user_id=?", (user_id,))
         conn.commit()
         conn.close()
-        await update.message.reply_text("🎉 Good job! You watched the ad and earned **500 SHIB**!")
+        await update.message.reply_text("🎉 Good job! You watched the ad and earned <b>500 SHIB</b>!", parse_mode="HTML")
 
 async def verify_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -229,7 +228,7 @@ async def add_task_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         await update.message.reply_text("✅ New Task Added Successfully!")
     except Exception:
-        await update.message.reply_text("⚠️ Syntax: `/Task [Link] [ID] [Prize]`\nExample: `/Task t.me/mychannel -1001234567 2000`")
+        await update.message.reply_text("⚠️ Syntax: <code>/Task [Link] [ID] [Prize]</code>\nExample: <code>/Task t.me/mychannel -1001234567 2000</code>", parse_mode="HTML")
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -238,7 +237,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("1. All", callback_data="adm_all"), InlineKeyboardButton("2. Pending", callback_data="adm_pending")],
         [InlineKeyboardButton("3. Paying", callback_data="adm_paying"), InlineKeyboardButton("4. Paid", callback_data="adm_paid")]
     ])
-    await update.message.reply_text("🛠️ **ADMIN CONTROL DASHBOARD**", reply_markup=kb)
+    await update.message.reply_text("🛠️ <b>ADMIN CONTROL DASHBOARD</b>", reply_markup=kb, parse_mode="HTML")
 
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -269,7 +268,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("Mark as Paying", callback_data=f"set_paying_{r[0]}")],
                 [InlineKeyboardButton("Mark as Paid ✅", callback_data=f"set_paid_{r[0]}")]
             ])
-        await query.message.reply_text(f"🆔 ID: {r[0]}\n👤 User ID: {r[1]}\n💳 Pay ID: `{r[2]}`\n💰 Amount: {r[3]} SHIB\n📌 Status: {r[4].upper()}", reply_markup=kb)
+        await query.message.reply_text(f"🆔 ID: {r[0]}\n👤 User ID: {r[1]}\n💳 Pay ID: <code>{r[2]}</code>\n💰 Amount: {r[3]} SHIB\n📌 Status: {r[4].upper()}", reply_markup=kb, parse_mode="HTML")
     conn.close()
 
 async def update_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -287,7 +286,7 @@ async def update_status_callback(update: Update, context: ContextTypes.DEFAULT_T
         c.execute("SELECT user_id, amount FROM withdraws WHERE id=?", (record_id,))
         user_id, amount = c.fetchone()
         try:
-            await context.bot.send_message(chat_id=user_id, text=f"🎉 **Your withdrawal of {amount} SHIB has been processed and marked as PAID!**")
+            await context.bot.send_message(chat_id=user_id, text=f"🎉 <b>Your withdrawal of {amount} SHIB has been processed and marked as PAID!</b>", parse_mode="HTML")
         except Exception as e:
             logger.error(f"Failed to message user on paid status: {e}")
             
@@ -316,4 +315,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-            
+                
